@@ -1,6 +1,7 @@
 """Plugin-owned finite MiniMax H3 long-video planning and sampling."""
 
 from __future__ import annotations
+import gc
 
 import copy
 import json
@@ -834,6 +835,18 @@ class MiniMaxH3FiniteSegmentFinalize(io.ComfyNode):
             trimmed_audio["waveform"] = (
                 waveform[..., trim_samples:].clone() if trim_samples else waveform
             )
+        # spill-seg-offload: release this segment's decoded frames and the
+        # superseded accumulated tensor now that the merged result exists.
+        # Downstream only needs trimmed_images (merged) and sampled_latent.
+        # Audio untouched by design.
+        # spill-seg-offload-fp16: store merged in fp16 (halves retained bytes; output converted back by consumer)
+        trimmed_images = trimmed_images.to(torch.float16)
+        del images
+        if accumulated_images is not None:
+            del accumulated_images
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return io.NodeOutput(sampled_latent, trimmed_images, trimmed_audio)
 
 
